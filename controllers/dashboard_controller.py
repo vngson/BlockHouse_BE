@@ -33,9 +33,12 @@ def get_dashboard_data() -> Tuple[Dict, int]:
                 status=HTTPStatus.BAD_REQUEST
             )
 
+        month = int(params.get('month')) if params.get('month') else None
+        year = int(params.get('year')) if params.get('year') else None
+
         dashboard_data = DashboardService.get_dashboard_data(
-            month=params.get('month'),
-            year=params.get('year')
+            month=month,
+            year=year
         )
         
         return format_response(

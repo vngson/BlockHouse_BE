@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from helpers.format_response import format_response
 from models.employee_model import Employee
 from models import db
-from requests.employee_request import EmployeeRequestSchema
+from requests.employee_request import EmployeeFilterRequestSchema, EmployeeRequestSchema, EmployeeRequestUpdateSchema
 from responses.employee_response import EmployeeResponseSchema
 from services.employee_service import EmployeeService
 from settings import PAGE_SIZE
@@ -12,7 +12,9 @@ from http import HTTPStatus
 
 employee_bp = Blueprint('employee', __name__, url_prefix='/api/v1/employees')
 
+request_update_schema = EmployeeRequestUpdateSchema()
 request_schema = EmployeeRequestSchema()
+request_filter_schema = EmployeeFilterRequestSchema()
 response_schema = EmployeeResponseSchema()
 response_many_schema = EmployeeResponseSchema(many=True)
 
@@ -25,25 +27,29 @@ def get_all_employees() -> Tuple[Dict, int]:
         Formatted response with list of employees
     """
     try:
-        data = request.get_json() or {}
-        errors = request_schema.validate(data)
-        if errors:
-            logger.warning(f"Validation error in get_all_employees: {errors}")
-            return format_response(
-                data=errors,
-                message="Validation error",
-                status=HTTPStatus.BAD_REQUEST
-            )
-
-        page = data.get('page', 1)
-        start_date = data.get('start_date')
-        end_date = data.get('end_date')
+        if not request.data:
+            data = {}
+        else:
+            data = request.get_json(silent=True) or {}
+        
+        # Set context for schema validation
+        request_filter_schema.context = data
+        
+        # Load data to ensure date fields are converted to datetime.date
+        validated_data = request_filter_schema.load(data)
+        
+        page = validated_data.get('page', 1)
+        page_size = validated_data.get('page_size', PAGE_SIZE)
+        date_from = validated_data.get('date_from')
+        date_to = validated_data.get('date_to')
+        keyword = validated_data.get('keyword')
 
         employees, total_employees = EmployeeService.get_all_employees(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=date_from,
+            end_date=date_to,
             page=page,
-            page_size=PAGE_SIZE
+            page_size=PAGE_SIZE,
+            keyword=keyword
         )
         
         return format_response(
@@ -140,7 +146,7 @@ def update_employee(employee_id: int) -> Tuple[Dict, int]:
     """
     try:
         data = request.get_json()
-        errors = request_schema.validate(data)
+        errors = request_update_schema.validate(data)
         if errors:
             logger.warning(f"Validation error in update_employee: {errors}")
             return format_response(

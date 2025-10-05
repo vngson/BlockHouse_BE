@@ -9,12 +9,21 @@ class EmployeeRevenueSchema(Schema):
     revenue = fields.Float()
     order_count = fields.Integer()
 
-class MonthlyRevenueSchema(Schema):
+class MonthlyServiceDataSchema(Schema):
     """
-    Schema for monthly revenue data.
+    Schema for monthly service data (quantity and revenue per month).
     """
     month = fields.Integer()
+    quantity = fields.Integer()
     revenue = fields.Float()
+
+class ServiceChartSchema(Schema):
+    """
+    Schema for service chart data, including monthly data.
+    """
+    service_id = fields.Integer()
+    service_name = fields.String()
+    monthly_data = fields.List(fields.Nested(MonthlyServiceDataSchema))
 
 class DashboardResponseSchema(Schema):
     """
@@ -24,4 +33,4 @@ class DashboardResponseSchema(Schema):
     total_revenue = fields.Float()
     total_service_sales = fields.Integer()
     growth_percent = fields.Float()
-    monthly_chart = fields.List(fields.Nested(MonthlyRevenueSchema))
+    monthly_chart = fields.List(fields.Nested(ServiceChartSchema))

@@ -4,6 +4,8 @@ from controllers.sample_routes import sample_bp
 from controllers.employee_controller import employee_bp
 from controllers.dashboard_controller import dashboard_bp
 from controllers.order_controller import order_bp
+from controllers.health_controller import health_bp
+from controllers.service_controller import service_bp
 def create_app():
     app = Flask(__name__)
     app.config.from_object('config.Config')
@@ -16,6 +18,8 @@ def create_app():
     app.register_blueprint(employee_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(order_bp)
+    app.register_blueprint(health_bp)
+    app.register_blueprint(service_bp)
 
     return app
 

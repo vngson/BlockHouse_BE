@@ -1,4 +1,6 @@
 from datetime import date
+
+from sqlalchemy import or_
 from models.employee_model import Employee
 from models import db
 from typing import Dict, List, Any, Tuple
@@ -15,6 +17,7 @@ class EmployeeService:
     def get_all_employees(
         start_date: date = None,
         end_date: date = None,
+        keyword: str = None,
         page: int = 1,
         page_size: int = 15
     ) -> Tuple[List[Employee], int]:
@@ -36,6 +39,9 @@ class EmployeeService:
             query = query.filter(Employee.created_at >= start_date)
         if end_date:
             query = query.filter(Employee.created_at <= end_date)
+
+        if keyword:
+            query = query.filter(Employee.name.ilike(f"%{keyword}%"))
             
         total_employees = query.count()
         employees = query.order_by(Employee.id).offset((page - 1) * page_size).limit(page_size).all()

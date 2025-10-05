@@ -2,20 +2,52 @@ from marshmallow import Schema, fields
 
 class OrderServiceResponseSchema(Schema):
     """
-    Schema for serializing order service response data.
+    Schema for serializing OrderServiceModel data.
     """
     service_id = fields.Integer()
+    name = fields.String()
     quantity = fields.Integer()
-    name = fields.String(dump_only=True)
 
 class OrderResponseSchema(Schema):
     """
-    Schema for serializing order response data.
+    Schema for serializing Order data.
     """
-    id = fields.Integer(dump_only=True)
+    id = fields.Integer()
     datetime = fields.DateTime()
     employee_id = fields.Integer(allow_none=True)
-    employee_name = fields.String(dump_only=True)
+    employee_name = fields.String(allow_none=True)
     promotion_id = fields.Integer(allow_none=True)
-    total = fields.Float(allow_none=True, as_string=True)
-    services = fields.List(fields.Nested(OrderServiceResponseSchema), dump_only=True)
+    total = fields.Float()
+    services = fields.List(fields.Nested(OrderServiceResponseSchema))
+    created_at = fields.DateTime()
+    updated_at = fields.DateTime()
+
+class OrdersByDateResponseSchema(Schema):
+    """
+    Schema for serializing orders grouped by date.
+    """
+    date = fields.Date()
+    total = fields.Float()
+    services = fields.List(fields.Nested(OrderServiceResponseSchema))
+    employee_id = fields.Integer(allow_none=True)
+    promotion_id = fields.Integer(allow_none=True)
+
+class OrdersForOneDateResponseSchema(Schema):
+    """
+    Schema for serializing orders for a specific date.
+    """
+    date = fields.Date()
+    total = fields.Float()
+    services = fields.List(fields.Nested(OrderServiceResponseSchema))
+    employee_id = fields.Integer(allow_none=True)
+    promotion_id = fields.Integer(allow_none=True)
+
+class RevenueByEmployeeResponseSchema(Schema):
+    """
+    Schema for serializing revenue data grouped by date and employee.
+    """
+    date = fields.Date()
+    employee_id = fields.Integer()
+    employee_name = fields.String()
+    total = fields.Float()
+    services = fields.List(fields.Nested(OrderServiceResponseSchema))

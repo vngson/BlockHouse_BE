@@ -10,3 +10,12 @@ class Order(db.Model):
     total = db.Column('TongTien', db.Float)
     created_at = db.Column('created_at', db.DateTime, default=dt.utcnow)
     updated_at = db.Column('updated_at', db.DateTime, default=dt.utcnow, onupdate=dt.utcnow)
+
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            if key == 'datetime' and isinstance(value, str):
+                try:
+                    kwargs[key] = dt.fromisoformat(value)
+                except ValueError:
+                    raise ValueError(f"Invalid datetime format for NgayGio: {value}")
+            setattr(self, key, value)

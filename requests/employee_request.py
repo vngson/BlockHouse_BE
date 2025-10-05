@@ -1,14 +1,23 @@
 from marshmallow import Schema, fields, validates, ValidationError
 import re
 
-class EmployeeRequestSchema(Schema):
+class EmployeeRequestUpdateSchema(Schema):
     """
-    Schema for validating employee request data.
+    Schema for validating employee status update only.
     """
-    name = fields.String(required=True, validate=lambda x: len(x.strip()) > 0)
-    phone = fields.String(allow_none=True)
-    status = fields.Integer(allow_none=True)
-    income = fields.Decimal(allow_none=True)
+    status = fields.Integer(required=True)
+
+    @validates('status')
+    def validate_status(self, value, **kwargs):
+        """Validate status is either 0 or 1"""
+        if value not in [0, 1]:
+            raise ValidationError('Status must be 0 (inactive) or 1 (active)')
+
+class EmployeeRequestSchema(Schema): 
+    """ Schema for validating employee request data. """ 
+    name = fields.String(required=True, validate=lambda x: len(x.strip()) > 0) 
+    phone = fields.String(allow_none=True) 
+    status = fields.Integer(allow_none=True) 
 
     @validates('phone')
     def validate_phone(self, value, **kwargs):
@@ -16,23 +25,19 @@ class EmployeeRequestSchema(Schema):
         if value and not re.match(r'^\+?1?\d{9,15}$', value):
             raise ValidationError('Invalid phone number format')
 
-    @validates('status')
-    def validate_status(self, value, **kwargs):
-        """Validate status is either 0 or 1"""
-        if value is not None and value not in [0, 1]:
-            raise ValidationError('Status must be 0 (inactive) or 1 (active)')
-        
 class EmployeeFilterRequestSchema(Schema):
     """
     Schema for validating employee filter request data.
     """
-    start_date = fields.Date(allow_none=True)
-    end_date = fields.Date(allow_none=True)
+    date_from = fields.Date(allow_none=True)
+    date_to = fields.Date(allow_none=True)
+    keyword = fields.String(allow_none=True)
     page = fields.Integer(load_default=1, validate=lambda x: x >= 1)
+    page_size = fields.Integer(load_default=15, validate=lambda x: 1 <= x <= 100)
 
-    @validates('end_date')
-    def validate_end_date(self, value, **kwargs):
-        """Ensure end_date is not before start_date"""
-        if 'start_date' in self.context and self.context['start_date'] and value:
-            if value < self.context['start_date']:
-                raise ValidationError('end_date must not be before start_date')
+    @validates('date_to')
+    def validate_date_to(self, value, **kwargs):
+        """Ensure date_to is not before date_from"""
+        if 'date_from' in self.context and self.context['date_from'] and value:
+            if value < self.context['date_from']:
+                raise ValidationError('date_to must not be before date_from')

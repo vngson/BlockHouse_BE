@@ -9,3 +9,5 @@ class EmployeeResponseSchema(Schema):
     phone = fields.String(allow_none=True)
     status = fields.Integer()
     income = fields.Decimal(allow_none=True, as_string=True)
+    created_at = fields.Date(required=True)
+    updated_at = fields.Date(allow_none=True)
