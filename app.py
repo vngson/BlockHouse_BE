@@ -1,4 +1,5 @@
 from flask import Flask
+from flask_cors import CORS
 from models import db
 from controllers.sample_routes import sample_bp
 from controllers.employee_controller import employee_bp
@@ -9,6 +10,7 @@ from controllers.service_controller import service_bp
 def create_app():
     app = Flask(__name__)
     app.config.from_object('config.Config')
+    CORS(app)
     db.init_app(app)
 
     with app.app_context():

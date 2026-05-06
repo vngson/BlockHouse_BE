@@ -4,7 +4,7 @@ from helpers.format_response import format_response
 from models.order_model import Order
 from models import db
 from requests.order_request import OrderByDateAndEmployeeRequest, OrderCreateRequest, OrderOneDateRequest, OrderUpdateRequest, OrderFilterRequest
-from responses.order_response import OrderResponseSchema, OrdersByDateResponseSchema, OrdersForOneDateResponseSchema, RevenueByEmployeeResponseSchema
+from responses.order_response import OrderResponseSchema, OrdersByDateResponseSchema, OrdersForOneDateResponseSchema, RevenueByEmployeeMonthlyResponseSchema, RevenueByEmployeeResponseSchema
 from services.order_service import OrderService
 from settings import PAGE_SIZE
 from utils.logger import logger
@@ -20,6 +20,7 @@ request_one_date_schema = OrderOneDateRequest()
 request_date_employee_schema = OrderByDateAndEmployeeRequest()
 response_schema = OrderResponseSchema()
 response_many_schema = OrderResponseSchema(many=True)
+response_monthly_revenue_schema = RevenueByEmployeeMonthlyResponseSchema(many=True)
 
 @order_bp.route('/', methods=['POST'])
 def get_all_orders() -> Tuple[Dict, int]:
@@ -436,5 +437,76 @@ def delete_order(order_id: int) -> Tuple[Dict, int]:
         return format_response(
             message="Internal server error",
             data=None,
+            status=HTTPStatus.INTERNAL_SERVER_ERROR
+        )
+    
+@order_bp.route('/revenue_monthly_by_employee', methods=['POST'])
+def get_revenue_monthly_by_employee() -> Tuple[Dict, int]:
+    """
+    Retrieve monthly revenue grouped by employee with same interface as other APIs.
+    
+    Request body (example):
+        {
+            "date_from": "2025-01-01",
+            "date_to": "2025-12-31",
+            "keyword": "search term",
+            "page": 1,
+            "page_size": 15
+        }
+
+    Returns:
+        Formatted response with monthly revenue by employee
+    """
+    try:
+        # Handle empty request body case
+        if not request.data:
+            data = {}
+        else:
+            data = request.get_json(silent=True) or {}
+        
+        # Set context for schema validation
+        request_filter_schema.context = data
+        
+        # Load data to ensure date fields are converted to datetime.date
+        validated_data = request_filter_schema.load(data)
+        
+        page = validated_data.get('page', 1)
+        page_size = validated_data.get('page_size', PAGE_SIZE)
+        date_from = validated_data.get('date_from')
+        date_to = validated_data.get('date_to')
+        keyword = validated_data.get('keyword')
+
+        # Call service to get monthly revenue by employee
+        monthly_revenue_data, total_records = OrderService.get_revenue_by_employee_monthly(
+            date_from=date_from,
+            date_to=date_to,
+            keyword=keyword,
+            page=page,
+            page_size=page_size
+        )
+        
+        return format_response(
+            data={
+                'revenue_monthly_by_employee': response_monthly_revenue_schema.dump(monthly_revenue_data),
+                'date_from': date_from.isoformat() if date_from else None,
+                'date_to': date_to.isoformat() if date_to else None,
+                'page': page,
+                'page_size': page_size,
+                'total_records': total_records
+            },
+            message="Monthly revenue by employee retrieved successfully",
+            status=HTTPStatus.OK
+        )
+        
+    except ValueError as ve:
+        logger.warning(f"Validation error in get_revenue_monthly_by_employee: {str(ve)}")
+        return format_response(
+            message=str(ve),
+            status=HTTPStatus.BAD_REQUEST
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving monthly revenue by employee: {str(e)}")
+        return format_response(
+            message="Internal server error",
             status=HTTPStatus.INTERNAL_SERVER_ERROR
         )

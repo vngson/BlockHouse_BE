@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 import datetime
 
 from sqlalchemy import desc, func,distinct, tuple_
@@ -85,39 +85,29 @@ class OrderService:
         page: int = 1,
         page_size: int = 15
     ) -> Tuple[List[Dict], int]:
-        logger.debug(f"Fetching orders by date with date_from={date_from}, date_to={date_to}, keyword={keyword}, page={page}, page_size={page_size}")
-        
-        # Query distinct dates
-        date_query = db.session.query(
-            func.date(Order.datetime).label('order_date')
-        ).distinct()
+        date_query = db.session.query(func.date(Order.datetime).label('order_date')).distinct()
         if date_from:
             date_query = date_query.filter(func.date(Order.datetime) >= date_from)
         if date_to:
             date_query = date_query.filter(func.date(Order.datetime) <= date_to)
         total_days = date_query.count()
-        
-        # Paginate dates
-        paginated_dates = date_query.order_by(
-            func.date(Order.datetime).desc()
-        ).offset((page - 1) * page_size).limit(page_size).all()
+
+        paginated_dates = date_query.order_by(func.date(Order.datetime).desc())\
+                                    .offset((page - 1) * page_size).limit(page_size).all()
         order_dates = [d.order_date for d in paginated_dates]
-        
-        # Get orders for these dates
+
         orders_query = Order.query.filter(func.date(Order.datetime).in_(order_dates))
         if keyword:
-            orders_query = orders_query.join(Employee, Order.employee_id == Employee.id, isouter=True).join(
-                OrderServiceModel, Order.id == OrderServiceModel.order_id, isouter=True
-            ).join(Service, OrderServiceModel.service_id == Service.id, isouter=True).filter(
-                db.or_(
-                    Employee.name.ilike(f"%{keyword}%") if Employee else False,
-                    Service.name.ilike(f"%{keyword}%")
-                )
-            )
-        
+            orders_query = orders_query.join(Employee, Order.employee_id == Employee.id, isouter=True)\
+                                      .join(OrderServiceModel, Order.id == OrderServiceModel.order_id, isouter=True)\
+                                      .join(Service, OrderServiceModel.service_id == Service.id, isouter=True)\
+                                      .filter(db.or_(
+                                          Employee.name.ilike(f"%{keyword}%") if Employee else False,
+                                          Service.name.ilike(f"%{keyword}%")
+                                      ))
+
         orders = orders_query.order_by(Order.datetime.desc()).all()
-        
-        # Group by date and calculate totals
+
         orders_by_date = {}
         for order in orders:
             order_date = order.datetime.date()
@@ -129,15 +119,13 @@ class OrderService:
                     'employee_id': None,
                     'promotion_id': None
                 }
-            
-            # Tính total từ services để đảm bảo đúng
+
             order_services = OrderServiceModel.query.filter_by(order_id=order.id).all()
             calculated_total = 0.0
             for os in order_services:
                 service = Service.query.get(os.service_id)
                 if service:
                     calculated_total += service.price * os.quantity
-                    # Add service to result
                     existing_service = next(
                         (s for s in orders_by_date[order_date]['services'] if s['service_id'] == service.id),
                         None
@@ -150,12 +138,11 @@ class OrderService:
                             'name': service.name,
                             'quantity': os.quantity
                         })
-            
-            # Update total and other fields
+
             orders_by_date[order_date]['total'] += calculated_total
             if orders_by_date[order_date]['promotion_id'] is None:
                 orders_by_date[order_date]['promotion_id'] = order.promotion_id
-            
+
         result = list(orders_by_date.values())
         return result, total_days
     
@@ -531,74 +518,6 @@ class OrderService:
             db.session.commit()
         logger.info(f"Deleted order ID {order_id}")
 
-    @staticmethod
-    def get_orders_by_date(
-        date_from: date = None,
-        date_to: date = None,
-        keyword: str = None,
-        page: int = 1,
-        page_size: int = 15
-    ) -> Tuple[List[Dict], int]:
-        date_query = db.session.query(func.date(Order.datetime).label('order_date')).distinct()
-        if date_from:
-            date_query = date_query.filter(func.date(Order.datetime) >= date_from)
-        if date_to:
-            date_query = date_query.filter(func.date(Order.datetime) <= date_to)
-        total_days = date_query.count()
-
-        paginated_dates = date_query.order_by(func.date(Order.datetime).desc())\
-                                    .offset((page - 1) * page_size).limit(page_size).all()
-        order_dates = [d.order_date for d in paginated_dates]
-
-        orders_query = Order.query.filter(func.date(Order.datetime).in_(order_dates))
-        if keyword:
-            orders_query = orders_query.join(Employee, Order.employee_id == Employee.id, isouter=True)\
-                                      .join(OrderServiceModel, Order.id == OrderServiceModel.order_id, isouter=True)\
-                                      .join(Service, OrderServiceModel.service_id == Service.id, isouter=True)\
-                                      .filter(db.or_(
-                                          Employee.name.ilike(f"%{keyword}%") if Employee else False,
-                                          Service.name.ilike(f"%{keyword}%")
-                                      ))
-
-        orders = orders_query.order_by(Order.datetime.desc()).all()
-
-        orders_by_date = {}
-        for order in orders:
-            order_date = order.datetime.date()
-            if order_date not in orders_by_date:
-                orders_by_date[order_date] = {
-                    'date': order_date,
-                    'total': 0.0,
-                    'services': [],
-                    'employee_id': None,
-                    'promotion_id': None
-                }
-
-            order_services = OrderServiceModel.query.filter_by(order_id=order.id).all()
-            calculated_total = 0.0
-            for os in order_services:
-                service = Service.query.get(os.service_id)
-                if service:
-                    calculated_total += service.price * os.quantity
-                    existing_service = next(
-                        (s for s in orders_by_date[order_date]['services'] if s['service_id'] == service.id),
-                        None
-                    )
-                    if existing_service:
-                        existing_service['quantity'] += os.quantity
-                    else:
-                        orders_by_date[order_date]['services'].append({
-                            'service_id': service.id,
-                            'name': service.name,
-                            'quantity': os.quantity
-                        })
-
-            orders_by_date[order_date]['total'] += calculated_total
-            if orders_by_date[order_date]['promotion_id'] is None:
-                orders_by_date[order_date]['promotion_id'] = order.promotion_id
-
-        result = list(orders_by_date.values())
-        return result, total_days
         order = Order.query.get(order_id)
         if not order:
             raise ValueError(f"Order ID {order_id} not found")
@@ -628,3 +547,214 @@ class OrderService:
         db.session.delete(order)
         db.session.commit()
         logger.info(f"Deleted order ID {order_id}")
+    
+    # @staticmethod
+    # def get_orders_by_date(
+    #     date_from: date = None,
+    #     date_to: date = None,
+    #     keyword: str = None,
+    #     page: int = 1,
+    #     page_size: int = 15
+    # ) -> Tuple[List[Dict], int]:
+    #     date_query = db.session.query(func.date(Order.datetime).label('order_date')).distinct()
+    #     if date_from:
+    #         date_query = date_query.filter(func.date(Order.datetime) >= date_from)
+    #     if date_to:
+    #         date_query = date_query.filter(func.date(Order.datetime) <= date_to)
+    #     total_days = date_query.count()
+
+    #     paginated_dates = date_query.order_by(func.date(Order.datetime).desc())\
+    #                                 .offset((page - 1) * page_size).limit(page_size).all()
+    #     order_dates = [d.order_date for d in paginated_dates]
+
+    #     orders_query = Order.query.filter(func.date(Order.datetime).in_(order_dates))
+    #     if keyword:
+    #         orders_query = orders_query.join(Employee, Order.employee_id == Employee.id, isouter=True)\
+    #                                   .join(OrderServiceModel, Order.id == OrderServiceModel.order_id, isouter=True)\
+    #                                   .join(Service, OrderServiceModel.service_id == Service.id, isouter=True)\
+    #                                   .filter(db.or_(
+    #                                       Employee.name.ilike(f"%{keyword}%") if Employee else False,
+    #                                       Service.name.ilike(f"%{keyword}%")
+    #                                   ))
+
+    #     orders = orders_query.order_by(Order.datetime.desc()).all()
+
+    #     orders_by_date = {}
+    #     for order in orders:
+    #         order_date = order.datetime.date()
+    #         if order_date not in orders_by_date:
+    #             orders_by_date[order_date] = {
+    #                 'date': order_date,
+    #                 'total': 0.0,
+    #                 'services': [],
+    #                 'employee_id': None,
+    #                 'promotion_id': None
+    #             }
+
+    #         order_services = OrderServiceModel.query.filter_by(order_id=order.id).all()
+    #         calculated_total = 0.0
+    #         for os in order_services:
+    #             service = Service.query.get(os.service_id)
+    #             if service:
+    #                 calculated_total += service.price * os.quantity
+    #                 existing_service = next(
+    #                     (s for s in orders_by_date[order_date]['services'] if s['service_id'] == service.id),
+    #                     None
+    #                 )
+    #                 if existing_service:
+    #                     existing_service['quantity'] += os.quantity
+    #                 else:
+    #                     orders_by_date[order_date]['services'].append({
+    #                         'service_id': service.id,
+    #                         'name': service.name,
+    #                         'quantity': os.quantity
+    #                     })
+
+    #         orders_by_date[order_date]['total'] += calculated_total
+    #         if orders_by_date[order_date]['promotion_id'] is None:
+    #             orders_by_date[order_date]['promotion_id'] = order.promotion_id
+
+    #     result = list(orders_by_date.values())
+    #     return result, total_days
+    
+    @staticmethod
+    def get_revenue_by_employee_monthly(
+        date_from: date = None,
+        date_to: date = None,
+        keyword: str = None,
+        page: int = 1,
+        page_size: int = 15
+    ) -> Tuple[List[Dict], int]:
+        """
+        Retrieve monthly revenue grouped by employee.
+        
+        Args:
+            date_from: Filter orders created on or after this date
+            date_to: Filter orders created on or before this date
+            keyword: Search term to filter by employee name
+            page: Page number for pagination
+            page_size: Number of records per page
+
+        Returns:
+            Tuple containing list of monthly revenue entries and total count
+        """
+        logger.debug(f"Fetching monthly revenue: date_from={date_from}, date_to={date_to}, keyword={keyword}")
+        
+        # Query distinct year-month-employee combinations
+        query = db.session.query(
+            func.extract('year', Order.datetime).label('year'),
+            func.extract('month', Order.datetime).label('month'),
+            Order.employee_id
+        ).filter(Order.employee_id.isnot(None))  # Chỉ lấy đơn hàng có nhân viên
+        
+        # Apply date filters
+        if date_from:
+            query = query.filter(func.date(Order.datetime) >= date_from)
+        if date_to:
+            query = query.filter(func.date(Order.datetime) <= date_to)
+        
+        # Apply keyword filter
+        if keyword:
+            query = query.join(Employee).filter(
+                Employee.name.ilike(f"%{keyword}%")
+            )
+        
+        # Get distinct year-month-employee combinations
+        distinct_query = query.distinct()
+        
+        # Count total records
+        total_records = distinct_query.count()
+        
+        # Paginate
+        paginated_records = distinct_query.order_by(
+            func.extract('year', Order.datetime).desc(),
+            func.extract('month', Order.datetime).desc(),
+            Order.employee_id
+        ).offset((page - 1) * page_size).limit(page_size).all()
+        
+        # Get detailed data for paginated records
+        revenue_by_employee_monthly = {}
+        
+        for record in paginated_records:
+            year = int(record.year)
+            month = int(record.month)
+            employee_id = record.employee_id
+            
+            if not employee_id:
+                continue
+                
+            key = (year, month, employee_id)
+            
+            # Calculate start and end of month
+            month_start = date(year, month, 1)
+            if month == 12:
+                month_end = date(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                month_end = date(year, month + 1, 1) - timedelta(days=1)
+            
+            # Query orders for this employee in this month
+            # Áp dụng lại date_from/date_to filters cho đảm bảo
+            orders_query = Order.query.filter(
+                Order.employee_id == employee_id,
+                func.date(Order.datetime) >= month_start,
+                func.date(Order.datetime) <= month_end
+            )
+            
+            # Áp dụng date range filters nếu có
+            if date_from:
+                orders_query = orders_query.filter(func.date(Order.datetime) >= max(date_from, month_start))
+            if date_to:
+                orders_query = orders_query.filter(func.date(Order.datetime) <= min(date_to, month_end))
+            
+            orders = orders_query.all()
+            order_count = len(orders)
+            
+            if order_count == 0:
+                continue
+                
+            # Get employee info
+            employee = Employee.query.get(employee_id)
+            
+            # Initialize result entry
+            revenue_by_employee_monthly[key] = {
+                'year': year,
+                'month': month,
+                'employee_id': employee_id,
+                'employee_name': employee.name if employee else None,
+                'total': 0.0,
+                'order_count': order_count,
+                'services': []
+            }
+            
+            # Aggregate data from all orders
+            service_totals = {}
+            
+            for order in orders:
+                order_services = OrderServiceModel.query.filter_by(order_id=order.id).all()
+                
+                for os in order_services:
+                    service = Service.query.get(os.service_id)
+                    if service:
+                        # Add to total revenue
+                        service_total = service.price * os.quantity
+                        revenue_by_employee_monthly[key]['total'] += service_total
+                        
+                        # Aggregate services
+                        if service.id not in service_totals:
+                            service_totals[service.id] = {
+                                'service_id': service.id,
+                                'name': service.name,
+                                'quantity': os.quantity
+                            }
+                        else:
+                            service_totals[service.id]['quantity'] += os.quantity
+        
+            # Convert aggregated services to list
+            revenue_by_employee_monthly[key]['services'] = list(service_totals.values())
+        
+        result = list(revenue_by_employee_monthly.values())
+        
+        # Sort by year, month (descending) and total revenue (descending)
+        result.sort(key=lambda x: (x['year'], x['month'], x['total']), reverse=True)
+        
+        return result, total_records

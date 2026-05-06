@@ -48,7 +48,7 @@ def get_all_employees() -> Tuple[Dict, int]:
             start_date=date_from,
             end_date=date_to,
             page=page,
-            page_size=PAGE_SIZE,
+            page_size=page_size,
             keyword=keyword
         )
         

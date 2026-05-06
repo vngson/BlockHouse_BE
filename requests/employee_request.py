@@ -1,4 +1,4 @@
-from marshmallow import Schema, fields, validates, ValidationError
+from marshmallow import Schema, fields, validates, validates_schema, ValidationError
 import re
 
 class EmployeeRequestUpdateSchema(Schema):
@@ -35,9 +35,10 @@ class EmployeeFilterRequestSchema(Schema):
     page = fields.Integer(load_default=1, validate=lambda x: x >= 1)
     page_size = fields.Integer(load_default=15, validate=lambda x: 1 <= x <= 100)
 
-    @validates('date_to')
-    def validate_date_to(self, value, **kwargs):
+    @validates_schema
+    def validate_dates(self, data, **kwargs):
         """Ensure date_to is not before date_from"""
-        if 'date_from' in self.context and self.context['date_from'] and value:
-            if value < self.context['date_from']:
-                raise ValidationError('date_to must not be before date_from')
+        date_from = data.get('date_from')
+        date_to = data.get('date_to')
+        if date_from and date_to and date_to < date_from:
+            raise ValidationError({'date_to': ['date_to must not be before date_from']})

@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from models.employee_model import Employee
 from models import db
 from typing import Dict, List, Any, Tuple
@@ -16,36 +16,38 @@ class EmployeeService:
     @staticmethod
     def get_all_employees(
         start_date: date = None,
-        end_date: date = None,
+        end_date: date  = None,
         keyword: str = None,
         page: int = 1,
         page_size: int = 15
-    ) -> Tuple[List[Employee], int]:
-        """
-        Retrieve employees with optional date filtering and pagination.
-        
-        Args:
-            start_date: Filter employees created on or after this date
-            end_date: Filter employees created on or before this date
-            page: Page number for pagination
-            page_size: Number of employees per page
-            
-        Returns:
-            Tuple containing list of Employee objects and total count
-        """
+    ):
         query = Employee.query
-        
+
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+        # SỬA LẠI: Sử dụng func.date() để chuyển datetime thành date trước khi so sánh
         if start_date:
-            query = query.filter(Employee.created_at >= start_date)
+            query = query.filter(func.date(Employee.created_at) >= start_date)
+
         if end_date:
-            query = query.filter(Employee.created_at <= end_date)
+            query = query.filter(func.date(Employee.created_at) <= end_date)
 
         if keyword:
             query = query.filter(Employee.name.ilike(f"%{keyword}%"))
-            
+
         total_employees = query.count()
-        employees = query.order_by(Employee.id).offset((page - 1) * page_size).limit(page_size).all()
-        
+        employees = (
+            query
+            .order_by(Employee.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+
         return employees, total_employees
 
     @staticmethod
