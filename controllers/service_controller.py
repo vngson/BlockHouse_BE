@@ -27,7 +27,14 @@ def get_all_services() -> Tuple[Dict, int]:
         Formatted response with list of services, pagination info, and total count
     """
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
+        if not data:
+            data = {
+                'page': request.args.get('page', 1),
+                'page_size': request.args.get('page_size', PAGE_SIZE),
+                'keyword': request.args.get('keyword'),
+            }
+
         errors = filter_request_schema.validate(data)
         if errors:
             logger.warning(f"Validation error in get_all_services: {errors}")
@@ -37,14 +44,14 @@ def get_all_services() -> Tuple[Dict, int]:
                 status=HTTPStatus.BAD_REQUEST
             )
 
-        page = int(data.get('page', 1))
-        page_size = int(data.get('page_size', PAGE_SIZE))
-        keyword = data.get('keyword')  # Lấy keyword từ request
+        page = int(data.get('page', 1) or 1)
+        page_size = int(data.get('page_size', PAGE_SIZE) or PAGE_SIZE)
+        keyword = data.get('keyword')
 
         services, total_services = ServiceService.get_all_services(
             page=page,
             page_size=page_size,
-            keyword=keyword  # Truyền keyword vào service
+            keyword=keyword
         )
         return format_response(
             data={

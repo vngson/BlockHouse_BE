@@ -10,7 +10,8 @@ from controllers.service_controller import service_bp
 def create_app():
     app = Flask(__name__)
     app.config.from_object('config.Config')
-    CORS(app)
+    app.url_map.strict_slashes = False
+    CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
     db.init_app(app)
 
     with app.app_context():
