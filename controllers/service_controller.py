@@ -10,7 +10,7 @@ from http import HTTPStatus
 from helpers.format_response import format_response
 from settings import PAGE_SIZE
 
-service_bp = Blueprint('service', __name__, url_prefix='/api/v1/service')
+service_bp = Blueprint('service', __name__, url_prefix='/api/v1/services')
 
 request_schema = ServiceRequestSchema()
 update_request_schema = ServiceUpdateRequestSchema()
