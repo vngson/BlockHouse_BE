@@ -2,3 +2,4 @@ Flask
 Flask-SQLAlchemy
 marshmallow
 flask-cors
+waitress>=3,<4

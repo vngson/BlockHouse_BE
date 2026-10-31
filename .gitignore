@@ -205,3 +205,27 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local web API state
+data/
+backend-config.json
+*.before-web.bak
+demo-web.sqlite3*
+!BE.spec
+
+# Never publish operational databases or installer binaries
+*.db
+*.sqlite3
+*.bak
+installer/output/
+installer/vendor/
+
+installer/artifacts/
+
+# Generated local frontend bundle
+web/
+.commandcode/
+*.db-*
+*.sqlite3-*
+.env.*
+!.env.example

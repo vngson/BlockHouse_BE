@@ -1,3 +1,9 @@
+# BlockHouse 2 — local Web + Desktop
+
+Hướng dẫn hiện hành: **installer/RELEASE_GUIDE.md**. API dữ liệu WPF cũ bên dưới không còn mở; bản Desktop mới dùng `/api/web` có đăng nhập và giao diện offline đóng gói sẵn. Build/cài theo hướng dẫn mới, không đóng gói DB.
+
+---
+
 # BlockHouse BE
 
 Backend API cho hệ thống quản lý salon/barber shop, xây dựng bằng Flask.
@@ -48,7 +54,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Server chạy tại `http://localhost:5000`.
+Server chạy tại `http://localhost:5050`.
 
 ## API Endpoints
 
