@@ -2,6 +2,17 @@
 
 Hướng dẫn hiện hành: **installer/RELEASE_GUIDE.md**. API dữ liệu WPF cũ bên dưới không còn mở; bản Desktop mới dùng `/api/web` có đăng nhập và giao diện offline đóng gói sẵn. Build/cài theo hướng dẫn mới, không đóng gói DB.
 
+## Bản 2.0.17
+
+Báo cáo nhân viên theo ngày hoặc tháng và Doanh thu từng ngày có nút **Xem dịch vụ**, gồm Dịch vụ / Số lượng / Đơn giá / Tổng tiền / Hoa hồng. Số lượng tính theo ngày tạo đơn, không tính đơn đã hủy và không trừ lượt hủy của ngày khác. Giá, tổng tiền và hoa hồng lấy theo lịch sử đơn; dữ liệu cũ thiếu thông tin tiền theo dịch vụ hiển thị —. Nhiều mức giá hiển thị khoảng đơn giá. Cột Xem dịch vụ thu gọn và căn phải đồng nhất. Nâng cấp giữ database và cấu hình hiện tại.
+
+
+## Bản 2.0.18 — mặc định hoa hồng 100%
+
+Không có quy tắc đang hiệu lực áp dụng cho dòng dịch vụ thì hoa hồng bằng 100% số tiền dòng sau giảm giá. Thứ tự ưu tiên quy tắc không đổi; mức đã cấu hình, kể cả 0%, vẫn được giữ theo snapshot thanh toán.
+
+Khi khởi động BE mới, chỉ các dòng có snapshot chính xác `Chưa cấu hình · 0đ` và hoa hồng 0 được đổi sang 100% tiền đã lưu. BE tạo bản sao SQLite nhất quán cạnh DB, tên `BlockHouse.db.before-default-commission-100-<mã>.bak`, trước khi cập nhật trong một giao dịch; nếu backup thất bại thì không sửa dữ liệu. Tổng hoa hồng đơn được cộng lại từ các dòng để chi tiết, báo cáo, CSV và điều chỉnh hủy khớp nhau. Không thay giá, số lượng, tổng tiền hoặc các mức hoa hồng đã cấu hình. Chạy lại không cập nhật trùng. Bộ cài 2.0.18 có thay đổi này; bản 2.0.17 trước đó chưa có.
+
 ---
 
 # BlockHouse BE
@@ -129,3 +140,9 @@ Chi tiết đầy đủ: [API_DOCS.md](API_DOCS.md)
 ## License
 
 Private
+
+Bản 2.0.18: Cài đặt hoa hồng có nút Xóa kèm xác nhận, xóa được cả mức đang áp dụng và đã ngừng. Chỉ xóa cấu hình; snapshot hoa hồng đơn cũ giữ nguyên. Đơn mới dùng mức còn lại hoặc mặc định 100% nếu không có mức phù hợp. Quote đang chờ thanh toán được kiểm tra lại trước khi lưu.
+
+## Bản 2.0.19
+
+Doanh thu năm: cột Tháng dùng sắp xếp thay vì bộ lọc. Mặc định tháng 01 đến 12; nhấn tiêu đề Tháng để đảo chiều. Giữ nguyên số liệu, tổng năm, tính hoa hồng và bản sửa dữ liệu của 2.0.18.

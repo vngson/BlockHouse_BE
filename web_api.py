@@ -51,6 +51,24 @@ def text(value, label, limit=120):
     return value.strip()
 
 
+
+DEFAULT_COMMISSION_SNAPSHOT = 'Mặc định · 100% · sau giảm giá'
+
+
+def upgrade_unconfigured_commissions(connection, database):
+    # Only the old no-rule marker proves that zero was a fallback, not a saved rate.
+    with connection:
+        connection.execute('BEGIN IMMEDIATE')
+        affected = connection.execute("SELECT DISTINCT order_id FROM web_order_items WHERE rule_snapshot=? AND commission=0", ('Chưa cấu hình · 0đ',)).fetchall()
+        if not affected:
+            return
+        from backup import snapshot
+        backup = Path(database).with_name(Path(database).name + '.before-default-commission-100-' + secrets.token_hex(6) + '.bak')
+        snapshot(database, backup)
+        connection.execute("UPDATE web_order_items SET commission=total,rule_snapshot=? WHERE rule_snapshot=? AND commission=0", (DEFAULT_COMMISSION_SNAPSHOT, 'Chưa cấu hình · 0đ'))
+        connection.executemany('UPDATE web_order_meta SET commission=(SELECT SUM(commission) FROM web_order_items WHERE order_id=web_order_meta.order_id) WHERE order_id=?', affected)
+
+
 def register_web_api(app, database):
     """Add browser API to the existing BE and its existing SQLite database."""
     database = str(database)
@@ -83,6 +101,7 @@ def register_web_api(app, database):
                     connection.backup(backup)
         # Refresh the derived view atomically; original orders and saved commissions stay intact.
         connection.executescript('BEGIN IMMEDIATE;\n' + SCHEMA.replace('CREATE VIEW IF NOT EXISTS web_orders', 'DROP VIEW IF EXISTS web_orders;\nCREATE VIEW web_orders') + 'COMMIT;')
+        upgrade_unconfigured_commissions(connection, database)
 
     def db():
         if 'db' not in g:
@@ -346,6 +365,15 @@ def register_web_api(app, database):
             db().execute('UPDATE web_commission_rules SET active=1-active WHERE id=?', (rule_id,))
         return jsonify(ok=True)
 
+    @app.post('/api/web/rules/<int:rule_id>/delete')
+    @protected
+    def delete_rule(rule_id):
+        with db():
+            deleted = db().execute('DELETE FROM web_commission_rules WHERE id=?', (rule_id,))
+            if not deleted.rowcount:
+                return jsonify(error='Mức hoa hồng không còn tồn tại.'), 404
+        return jsonify(ok=True)
+
     def calculate(data):
         source = data.get('items')
         if not isinstance(source, list) or not 1 <= len(source) <= 50:
@@ -372,8 +400,8 @@ def register_web_api(app, database):
             i['total'] = i['gross'] - allocated
             rules = rows('SELECT * FROM web_commission_rules WHERE active=1 AND starts<=? AND (employee_id IS NULL OR employee_id=?) AND (service_id IS NULL OR service_id=?) ORDER BY (CASE WHEN employee_id IS NOT NULL THEN 2 ELSE 0 END + CASE WHEN service_id IS NOT NULL THEN 1 ELSE 0 END) DESC, starts DESC,id DESC LIMIT 1', (today()[:10], i['employee_id'], i['service_id']))
             rule = rules[0] if rules else None
-            i['rule_snapshot'] = 'Chưa cấu hình · 0đ'
-            i['commission'] = 0
+            i['rule_snapshot'] = DEFAULT_COMMISSION_SNAPSHOT
+            i['commission'] = i['total']
             if rule:
                 base = i['gross'] if rule['basis'] == 'before' else i['total']
                 amount = Decimal(base) * rule['value'] / 10000 if rule['kind'] == 'percent' else Decimal(rule['value'] * i['quantity'])
@@ -529,6 +557,48 @@ def register_web_api(app, database):
                 WHERE o.legacy=1 AND o.created_at>=? AND o.created_at<?
             ) GROUP BY employee_id ORDER BY revenue DESC,employee_id
         """, (start,end,start,end,start,end))
+        services = rows("""
+            SELECT employee_id,service_id,service_name,
+                   SUM(paid_quantity)-SUM(voided_quantity) quantity,
+                   SUM(paid_quantity) paid_quantity,SUM(voided_quantity) voided_quantity,
+                   SUM(completed_quantity) completed_quantity,
+                   CASE WHEN SUM(missing_money)>0 THEN NULL ELSE MIN(price) END price_min,
+                   CASE WHEN SUM(missing_money)>0 THEN NULL ELSE MAX(price) END price_max,
+                   CASE WHEN SUM(missing_money)>0 THEN NULL ELSE SUM(completed_total) END total,
+                   CASE WHEN SUM(missing_money)>0 THEN NULL ELSE SUM(completed_commission) END commission
+            FROM (
+                SELECT i.employee_id,i.service_id,i.service_name,i.quantity paid_quantity,0 voided_quantity,
+                       CASE WHEN o.status='paid' THEN i.quantity ELSE 0 END completed_quantity,
+                       CASE WHEN o.status='paid' THEN i.price END price,
+                       CASE WHEN o.status='paid' THEN i.total ELSE 0 END completed_total,
+                       CASE WHEN o.status='paid' THEN i.commission ELSE 0 END completed_commission,
+                       0 missing_money
+                FROM web_order_items i JOIN web_orders o ON i.order_id=o.id
+                WHERE o.legacy=0 AND o.created_at>=? AND o.created_at<?
+                UNION ALL
+                SELECT i.employee_id,i.service_id,i.service_name,0,i.quantity,0,NULL,0,0,0
+                FROM web_order_items i JOIN web_orders o ON i.order_id=o.id
+                WHERE o.legacy=0 AND o.voided_at>=? AND o.voided_at<?
+                UNION ALL
+                SELECT d.NhanVienID,i.DichVuID,
+                       COALESCE(s.Ten,'Dịch vụ cũ #'||i.DichVuID),COALESCE(i.SoLuong,0),0,COALESCE(i.SoLuong,0),
+                       NULL,0,0,CASE WHEN COALESCE(i.SoLuong,0)>0 THEN 1 ELSE 0 END
+                FROM web_orders o JOIN DonHang d ON d.ID=o.id
+                JOIN DonHang_DichVu i ON i.DonHangID=d.ID LEFT JOIN DichVu s ON s.ID=i.DichVuID
+                WHERE o.legacy=1 AND o.created_at>=? AND o.created_at<?
+            ) GROUP BY employee_id,service_id,service_name COLLATE BINARY
+            ORDER BY employee_id,paid_quantity DESC,service_name COLLATE BINARY,service_id
+        """, (start,end,start,end,start,end))
+        by_employee = {employee['employee_id']: employee for employee in employees}
+        for employee in employees:
+            employee['services'] = []
+            employee['paid_quantity'] = employee['voided_quantity'] = employee['completed_quantity'] = 0
+        for service in services:
+            employee = by_employee[service.pop('employee_id')]
+            employee['services'].append(service)
+            employee['paid_quantity'] += service['paid_quantity']
+            employee['voided_quantity'] += service['voided_quantity']
+            employee['completed_quantity'] += service['completed_quantity']
         total['legacy_commission_rate'] = 100
         total['quantity'] = sum(e['quantity'] for e in employees)
         total['legacy_count'] = rows('SELECT COUNT(*) n FROM web_orders WHERE created_at>=? AND created_at<? AND legacy=1', (start,end))[0]['n']

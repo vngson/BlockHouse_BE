@@ -5,7 +5,7 @@
   #error RuntimeInstaller is required (offline Microsoft WebView2 x64 installer)
 #endif
 #ifndef AppRelease
-  #define AppRelease "2.0.16"
+  #define AppRelease "2.0.19"
 #endif
 
 [Setup]

@@ -4,7 +4,7 @@ Một tài khoản quản trị, toàn quyền. Web và WPF Desktop mới dùng 
 
 ## Bộ cài
 
-`installer/output/BlockHouse-Setup-2.0.14-x64.exe` cài WPF self-contained .NET, BE, giao diện offline và bộ cài WebView2 x64 offline chính thức của Microsoft. Không đóng gói DB, tài khoản mẫu hoặc mật khẩu vào bộ cài. Máy đích không cần Python/Node/.NET SDK.
+`installer/output/BlockHouse-Setup-2.0.19-x64.exe` cài WPF self-contained .NET, BE, giao diện offline và bộ cài WebView2 x64 offline chính thức của Microsoft. Không đóng gói DB, tài khoản mẫu hoặc mật khẩu vào bộ cài. Máy đích không cần Python/Node/.NET SDK.
 
 - Windows x64; cài cho tài khoản Windows hiện tại, không yêu cầu quyền quản trị.
 - Chương trình: `%LOCALAPPDATA%\Programs\BlockHouse`.
@@ -136,3 +136,18 @@ Bản 2.0.12: Chạy tay BE.exe trong terminal hiện API/Web và lỗi khởi �
 Bản 2.0.13: WPF bỏ nút Điền tài khoản đã lưu, dùng remembered-login.json tại thư mục data AppData. Chỉ lưu sau khi đăng nhập thành công và tick Nhớ tài khoản; cả tên và mật khẩu nằm trong payload DPAPI CurrentUser, JSON không chứa mật khẩu rõ. Vào màn hình đăng nhập sẽ tự điền; đăng xuất vẫn giữ lựa chọn nhớ; bỏ tick rồi đăng nhập thành công sẽ xóa file. Đổi mật khẩu cập nhật thông tin nhớ nếu đúng tài khoản đang lưu. JSON lỗi/không giải mã được không ngăn đăng nhập thủ công. Cầu nối WebView2 chỉ nhận trang https://blockhouse.desktop/index.html và API 127.0.0.1:5050, chỉ thao tác một đường dẫn JSON cố định. Web thông thường dùng autocomplete Chrome/Edge, không truy cập JSON của WPF. Đã sửa nền vùng gutter để bỏ dải đen nhưng giữ chỗ scrollbar; icon tiêu đề dùng logo màu có nền sáng.
 
 Bản 2.0.14: Thanh tiêu đề WPF riêng cao 40 DIP, logo và font Bebas Neue có sẵn được đóng gói offline; nút thu nhỏ/phóng to-thu về/đóng theo style BlockHouse. WindowChrome giữ thao tác kéo, nhấp đúp và resize native. Theme nhận qua kênh blockhouse-theme chỉ từ trang index.html của origin nội bộ, không nhận lệnh điều khiển cửa sổ từ JavaScript. Nút đóng vẫn chỉ đóng Desktop, không dừng BE. Đã render XAML thật ở sáng/tối, 360/1200px và kiểm tra ba nút có tên truy cập, không tràn. Cần kiểm tra tương tác native và taskbar trên máy đích.
+
+## Bản 2.0.17
+
+Báo cáo nhân viên theo ngày hoặc tháng và Doanh thu từng ngày có nút **Xem dịch vụ**, gồm Dịch vụ / Số lượng / Đơn giá / Tổng tiền / Hoa hồng. Số lượng tính theo ngày tạo đơn, không tính đơn đã hủy và không trừ lượt hủy của ngày khác. Giá, tổng tiền và hoa hồng lấy theo lịch sử đơn; dữ liệu cũ thiếu thông tin tiền theo dịch vụ hiển thị —. Nhiều mức giá hiển thị khoảng đơn giá. Cột Xem dịch vụ thu gọn và căn phải đồng nhất. Nâng cấp giữ database và cấu hình hiện tại.
+
+## Bản 2.0.18
+
+- Không có quy tắc đang hiệu lực áp dụng thì hoa hồng mặc định bằng 100% tiền dịch vụ sau giảm giá. Quy tắc đã đặt, kể cả 0%, giữ nguyên theo snapshot lúc thanh toán.
+- BE tự sửa các dòng cũ có snapshot chính xác `Chưa cấu hình · 0đ` và hoa hồng 0 khi khởi động. Trước khi sửa, tạo backup SQLite nhất quán cạnh DB: `BlockHouse.db.before-default-commission-100-<mã>.bak`. Không sửa nếu backup thất bại; cập nhật các dòng và tổng hoa hồng đơn trong một giao dịch. Không đổi doanh thu, giá, số lượng hoặc các mức hoa hồng đã cấu hình. Chạy lại không sửa trùng.
+- Cài đặt hoa hồng có nút Xóa kèm xác nhận; xóa được mức đang áp dụng hoặc đã ngừng, không thay hoa hồng đơn cũ. Đơn mới dùng mức còn lại hoặc mặc định 100%. Quote cũ được kiểm tra lại trước thanh toán.
+- Nâng cấp trên cùng tài khoản Windows giữ DB và cấu hình AppData. Không cần nhập lại DB. Khi BE mới khởi động, bước sửa trên tự chạy; có thể dừng/chạy BE bằng `BlockHouse.exe --stop-backend` / `BlockHouse.exe --backend`.
+
+## Bản 2.0.19
+
+Doanh thu năm: cột Tháng dùng sắp xếp thay vì bộ lọc. Mặc định tháng 01 đến 12; nhấn tiêu đề Tháng để đảo chiều. Giữ nguyên số liệu, tổng năm, tính hoa hồng và bản sửa dữ liệu của 2.0.18.

@@ -239,7 +239,10 @@ class BlockHouseTest(unittest.TestCase):
     def test_import_upgrade_defaults_only_legacy_commissions_and_is_repeatable(self):
         from runtime import import_database
         from models import db
-        self.save(self.payload())  # A recorded zero is a known commission, not legacy.
+        self.rule(name='Intentional zero', value=0)
+        zero = self.client.get('/api/catalog').json['rules'][0]['id']
+        self.save(self.payload())  # Explicit 0% is a known commission, not legacy.
+        self.post(f'/api/rules/{zero}/toggle', {})
         self.rule()
         data = dict(self.payload(), request_key='second-order')
         self.save(data)
@@ -320,6 +323,266 @@ class BlockHouseTest(unittest.TestCase):
         for day in ('2020-12-32','2020-11-30','20201201',''):
             self.assertEqual(self.client.get('/api/report?month=2020-12&day='+day).status_code, 400)
         self.assertEqual(self.client.get('/api/report?month=2020-12&day=2020-12-01&group=day').status_code,400)
+
+    def test_employee_service_breakdown_keeps_snapshots_and_legacy_quantities(self):
+        self.rule()
+        self.save(dict(items=[dict(service_id=1, employee_id=1, quantity=2),
+                              dict(service_id=2, employee_id=1, quantity=1),
+                              dict(service_id=1, employee_id=2, quantity=1)], request_key='original-services'))
+        self.post('/api/catalog/services', dict(id=1, name='Cat toc', price=999000))
+        self.post('/api/catalog/services', dict(name='Cắt tóc', price=1))
+        self.save(dict(items=[dict(service_id=1, employee_id=1, quantity=1),
+                              dict(service_id=3, employee_id=1, quantity=2)], request_key='renamed-services'))
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            stamp = today()[:19].replace('T', ' ')
+            connection.execute('INSERT INTO DonHang(ID,NgayGio,NhanVienID,TongTien) VALUES(100,?,1,123000)', (stamp,))
+            connection.executemany('INSERT INTO DonHang_DichVu(DonHangID,DichVuID,SoLuong) VALUES(100,?,?)', [(1,3),(2,2)])
+        report = self.client.get('/api/report').json
+        employee = next(row for row in report['employees'] if row['employee_id'] == 1)
+        services = {(row['service_id'], row['service_name']): row for row in employee['services']}
+        self.assertEqual({key: row['quantity'] for key,row in services.items()},
+                         {(1,'Cắt tóc'):2, (1,'Cat toc'):4, (2,'Gội đầu'):3, (3,'Cắt tóc'):2})
+        self.assertEqual(employee['quantity'], 11)
+        self.assertEqual(employee['completed_quantity'], 11)
+        self.assertEqual(employee['paid_quantity'], 11)
+        self.assertEqual(employee['voided_quantity'], 0)
+        self.assertEqual(employee['revenue'], 1372002)
+        self.assertEqual(self.client.get('/api/orders/1').json['items'][0]['price'], 100000)
+        second = next(row for row in report['employees'] if row['employee_id'] == 2)
+        self.assertEqual([(row['service_id'],row['quantity']) for row in second['services']], [(1,1)])
+        daily = self.client.get('/api/report?month='+today()[:7]+'&day='+today()[:10]).json
+        self.assertEqual(daily['employees'], report['employees'])
+        for row in report['employees']:
+            self.assertEqual(sum(service['quantity'] for service in row['services']), row['quantity'])
+            self.assertEqual(sum(service['paid_quantity'] for service in row['services']), row['paid_quantity'])
+            self.assertEqual(sum(service['voided_quantity'] for service in row['services']), row['voided_quantity'])
+            self.assertEqual(sum(service['completed_quantity'] for service in row['services']), row['completed_quantity'])
+
+    def test_employee_service_breakdown_separates_same_day_and_later_voids(self):
+        self.rule()
+        previous = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=2),
+                                         dict(service_id=2,employee_id=1,quantity=3)],request_key='previous-day')).json['id']
+        kept = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=4)],request_key='kept')).json['id']
+        canceled = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=5)],request_key='same-day-void')).json['id']
+        self.assertEqual(self.post(f'/api/orders/{previous}/void', {'reason':'Hoàn ngày sau'}).status_code, 200)
+        self.assertEqual(self.post(f'/api/orders/{canceled}/void', {'reason':'Hoàn cùng ngày'}).status_code, 200)
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute("UPDATE DonHang SET NgayGio='2020-12-01 10:00:00' WHERE ID=?", (previous,))
+            connection.execute("UPDATE DonHang SET NgayGio='2020-12-02 10:00:00' WHERE ID IN (?,?)", (kept,canceled))
+            connection.execute("UPDATE web_order_meta SET voided_at='2020-12-03T10:00:00+07:00' WHERE order_id=?", (previous,))
+            connection.execute("UPDATE web_order_meta SET voided_at='2020-12-02T11:00:00+07:00' WHERE order_id=?", (canceled,))
+        for day,expected in [('2020-12-01',(5,0,5)),('2020-12-02',(9,5,4)),('2020-12-03',(0,5,-5)),(None,(14,10,4))]:
+            query = '/api/report?month=2020-12' + ('&day='+day if day else '')
+            report = self.client.get(query).json
+            employee = report['employees'][0]
+            self.assertEqual((employee['paid_quantity'],employee['voided_quantity'],employee['quantity']),expected)
+            for field in ('quantity','paid_quantity','voided_quantity'):
+                self.assertEqual(sum(service[field] for service in employee['services']),employee[field])
+            for service in employee['services']:
+                self.assertEqual(service['quantity'],service['paid_quantity']-service['voided_quantity'])
+            self.assertEqual(employee['quantity'],report['totals']['quantity'])
+        reversal = self.client.get('/api/report?month=2020-12&day=2020-12-03').json['employees'][0]
+        self.assertEqual({row['service_id']:row['quantity'] for row in reversal['services']},{1:-2,2:-3})
+        empty = self.client.get('/api/report?month=2020-12&day=2020-12-04').json
+        self.assertEqual(empty['employees'],[])
+
+    def test_employee_service_breakdown_retains_missing_and_inactive_legacy_services(self):
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            stamp = today()[:19].replace('T', ' ')
+            connection.execute('INSERT INTO DonHang(ID,NgayGio,NhanVienID,TongTien) VALUES(100,?,NULL,123000)', (stamp,))
+            connection.execute('INSERT INTO DonHang_DichVu(DonHangID,DichVuID,SoLuong) VALUES(100,999,4)')
+            connection.execute('INSERT INTO DonHang(ID,NgayGio,NhanVienID,TongTien) VALUES(101,?,1,50000)', (stamp,))
+            connection.execute('INSERT INTO DonHang_DichVu(DonHangID,DichVuID,SoLuong) VALUES(101,1,2)')
+            connection.execute('UPDATE web_service_state SET active=0 WHERE service_id=1')
+        report = self.client.get('/api/report').json
+        unknown = next(row for row in report['employees'] if row['employee_id'] is None)
+        self.assertEqual(unknown['services'],[dict(service_id=999,service_name='Dịch vụ cũ #999',quantity=4,paid_quantity=4,voided_quantity=0,completed_quantity=4,price_min=None,price_max=None,total=None,commission=None)])
+        known = next(row for row in report['employees'] if row['employee_id'] == 1)
+        self.assertEqual(known['services'][0]['quantity'],2)
+        self.assertEqual(known['services'][0]['service_name'],'Cắt tóc')
+        self.assertEqual(sum(row['quantity'] for row in report['employees']),report['totals']['quantity'])
+
+    def test_completed_service_quantity_counts_creation_day_without_financial_reversals(self):
+        self.rule()
+        previous = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=6)],request_key='previous-six')).json['id']
+        kept = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=5)],request_key='completed-five')).json['id']
+        canceled = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=3)],request_key='canceled-three')).json['id']
+        self.assertEqual(self.post(f'/api/orders/{previous}/void', {'reason':'Hủy đơn ngày trước'}).status_code,200)
+        self.assertEqual(self.post(f'/api/orders/{canceled}/void', {'reason':'Hủy đơn cùng ngày'}).status_code,200)
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute("UPDATE DonHang SET NgayGio='2020-12-01 10:00:00' WHERE ID=?", (previous,))
+            connection.execute("UPDATE DonHang SET NgayGio='2020-12-02 10:00:00' WHERE ID IN (?,?)", (kept,canceled))
+            connection.execute("UPDATE web_order_meta SET voided_at='2020-12-02T11:00:00+07:00' WHERE order_id IN (?,?)", (previous,canceled))
+        report = self.client.get('/api/report?month=2020-12&day=2020-12-02').json
+        employee = report['employees'][0]
+        self.assertEqual(employee['completed_quantity'],5)
+        self.assertEqual(employee['quantity'],-1)
+        self.assertEqual(employee['paid_quantity'],8)
+        self.assertEqual(employee['voided_quantity'],9)
+        self.assertEqual(employee['services'][0]['completed_quantity'],5)
+        self.assertEqual(employee['services'][0]['quantity'],-1)
+        self.assertEqual(report['totals']['quantity'],-1)
+        self.assertEqual(report['totals']['revenue'],-100000)
+        previous_report = self.client.get('/api/report?month=2020-12&day=2020-12-01').json
+        self.assertEqual(previous_report['employees'][0]['completed_quantity'],0)
+        self.assertEqual(previous_report['employees'][0]['services'][0]['completed_quantity'],0)
+        self.assertEqual(previous_report['totals']['quantity'],6)
+        monthly = self.client.get('/api/report?month=2020-12').json
+        self.assertEqual(monthly['employees'][0]['completed_quantity'],5)
+        self.assertEqual(monthly['employees'][0]['quantity'],5)
+
+    def test_employee_service_money_uses_paid_snapshots_and_marks_legacy_unknown(self):
+        self.rule()
+        first = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=2)],discount=10000,request_key='price-one')).json['id']
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute('UPDATE DichVu SET Gia=120000 WHERE ID=1')
+        second = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=1)],request_key='price-two')).json['id']
+        canceled = self.save(dict(items=[dict(service_id=1,employee_id=1,quantity=4)],request_key='price-cancel')).json['id']
+        self.post(f'/api/orders/{canceled}/void', {'reason':'Canceled'})
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute('UPDATE DichVu SET Gia=999999 WHERE ID=1')
+        report = self.client.get('/api/report').json
+        service = report['employees'][0]['services'][0]
+        self.assertEqual(service['completed_quantity'],3)
+        self.assertEqual((service['price_min'],service['price_max']),(100000,120000))
+        self.assertEqual(service['total'],310000)
+        self.assertEqual(service['commission'],124000)
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute('INSERT INTO DonHang(ID,NgayGio,NhanVienID,TongTien) VALUES(100000,?,1,80000)',(today()[:19].replace('T',' '),))
+            connection.execute('INSERT INTO DonHang_DichVu(DonHangID,DichVuID,SoLuong) VALUES(100000,1,1)')
+        mixed = self.client.get('/api/report').json['employees'][0]['services'][0]
+        self.assertEqual(mixed['completed_quantity'],4)
+        for field in ('price_min','price_max','total','commission'):
+            self.assertIsNone(mixed[field])
+
+    def test_missing_commission_defaults_to_full_net_total_and_respects_explicit_zero(self):
+        self.rule(name='Future rule', value=25, starts='2999-01-01')
+        data = self.payload()
+        preview = self.post('/api/orders/quote', data).json['preview']
+        self.assertEqual(preview['commission'], 135000)
+        self.assertEqual([i['commission'] for i in preview['items']], [90000,45000])
+        self.assertTrue(all(i['rule_snapshot'] == 'Mặc định · 100% · sau giảm giá' for i in preview['items']))
+        self.rule(name='Explicit zero', employee_id=2, value=0)
+        preview = self.post('/api/orders/quote', data).json['preview']
+        self.assertEqual(preview['commission'], 90000)
+        self.assertEqual(preview['items'][1]['commission'], 0)
+        order_id = self.save(data).json['id']
+        self.assertEqual(self.client.get(f'/api/orders/{order_id}').json['commission'], 90000)
+        report = self.client.get('/api/report').json
+        employees = {row['employee_id']: row for row in report['employees']}
+        self.assertEqual(employees[1]['services'][0]['commission'], 90000)
+        self.assertEqual(employees[2]['services'][0]['commission'], 0)
+
+    def test_startup_corrects_only_old_missing_rule_snapshots_with_backup_and_is_repeatable(self):
+        from models import db
+        self.rule(name='Explicit zero', employee_id=2, value=0)
+        old = self.save(self.payload()).json['id']
+        self.rule(name='Recorded 40 percent', employee_id=1, value=40)
+        recorded = self.save(dict(self.payload(), request_key='recorded')).json['id']
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute("UPDATE web_order_items SET commission=0,rule_snapshot='Chưa cấu hình · 0đ' WHERE order_id=? AND employee_id=1", (old,))
+            connection.execute('UPDATE web_order_meta SET commission=0 WHERE order_id=?', (old,))
+            before = connection.execute('SELECT id,order_id,quantity,price,discount,total FROM web_order_items ORDER BY id').fetchall()
+        for _ in range(2):
+            upgraded = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': 'sqlite:///' + str(self.path)})
+            with upgraded.app_context():
+                db.session.remove()
+                db.engine.dispose()
+        backups = list(self.path.parent.glob(self.path.name + '.before-default-commission-100-*.bak'))
+        self.assertEqual(len(backups), 1)
+        with closing(sqlite3.connect(backups[0])) as backup:
+            self.assertEqual(backup.execute('PRAGMA quick_check').fetchone()[0], 'ok')
+            self.assertEqual(backup.execute('SELECT commission FROM web_order_meta WHERE order_id=?', (old,)).fetchone()[0], 0)
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(connection.execute('SELECT id,order_id,quantity,price,discount,total FROM web_order_items ORDER BY id').fetchall(), before)
+        self.assertEqual(self.client.get(f'/api/orders/{old}').json['commission'], 90000)
+        self.assertEqual(self.client.get(f'/api/orders/{recorded}').json['commission'], 36000)
+        self.assertEqual(self.client.get(f'/api/orders/{old}').json['items'][1]['commission'], 0)
+        for query in ('/api/report', '/api/report?month=' + today()[:7] + '&day=' + today()[:10]):
+            report = self.client.get(query).json
+            self.assertEqual(report['totals']['revenue'], 270000)
+            self.assertEqual(report['totals']['commission'], 126000)
+            self.assertEqual(sum(r['commission'] for r in report['employees']), 126000)
+            self.assertEqual(sum(r['commission'] for r in report['daily']), 126000)
+            self.assertEqual(sum(s['commission'] for e in report['employees'] for s in e['services']), 126000)
+        self.assertIn('126000', self.client.get('/api/report.csv?group=day').get_data(as_text=True))
+
+    def test_missing_rule_upgrade_refuses_to_write_when_backup_fails(self):
+        from unittest.mock import patch
+        from web_api import upgrade_unconfigured_commissions
+        order_id = self.save(self.payload()).json['id']
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute("UPDATE web_order_items SET commission=0,rule_snapshot='Chưa cấu hình · 0đ'")
+            connection.execute('UPDATE web_order_meta SET commission=0')
+        with closing(sqlite3.connect(self.path)) as connection:
+            with patch('backup.snapshot', side_effect=OSError('Test backup failure')):
+                with self.assertRaises(OSError):
+                    upgrade_unconfigured_commissions(connection, self.path)
+            self.assertFalse(connection.in_transaction)
+            self.assertEqual(connection.execute('SELECT SUM(commission) FROM web_order_items').fetchone()[0], 0)
+            self.assertEqual(connection.execute('SELECT commission FROM web_order_meta WHERE order_id=?', (order_id,)).fetchone()[0], 0)
+
+    def test_corrected_missing_rule_commission_reverses_on_void_date(self):
+        from web_api import upgrade_unconfigured_commissions
+        order_id = self.save(self.payload()).json['id']
+        self.assertEqual(self.post(f'/api/orders/{order_id}/void', {'reason':'Test void'}).status_code, 200)
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute("UPDATE web_order_items SET commission=0,rule_snapshot='Chưa cấu hình · 0đ' WHERE order_id=?", (order_id,))
+            connection.execute('UPDATE web_order_meta SET commission=0 WHERE order_id=?', (order_id,))
+            connection.execute("UPDATE DonHang SET NgayGio='2020-12-31 10:00:00' WHERE ID=?", (order_id,))
+            connection.execute("UPDATE web_order_meta SET voided_at='2021-01-01T11:00:00+07:00' WHERE order_id=?", (order_id,))
+        with closing(sqlite3.connect(self.path)) as connection:
+            upgrade_unconfigured_commissions(connection, self.path)
+        for month, expected in [('2020-12',135000),('2021-01',-135000)]:
+            report = self.client.get('/api/report?month=' + month).json
+            self.assertEqual(report['totals']['commission'], expected)
+            self.assertEqual(sum(e['commission'] for e in report['employees']), expected)
+            self.assertEqual(sum(d['commission'] for d in report['daily']), expected)
+            self.assertTrue(all(e['completed_quantity'] == 0 for e in report['employees']))
+
+
+    def test_deleting_rule_preserves_paid_snapshots_and_invalidates_old_quote(self):
+        self.rule()
+        rule_id = self.client.get('/api/catalog').json['rules'][0]['id']
+        order_id = self.save(self.payload()).json['id']
+        detail_before = self.client.get(f'/api/orders/{order_id}').json
+        report_before = self.client.get('/api/report').json
+        pending = dict(self.payload(), request_key='after-delete')
+        old_quote = self.post('/api/orders/quote', pending).json['quote']
+        self.assertEqual(self.post(f'/api/rules/{rule_id}/delete', {}).status_code, 200)
+        self.assertEqual(self.client.get('/api/catalog').json['rules'], [])
+        self.assertEqual(self.client.get(f'/api/orders/{order_id}').json, detail_before)
+        self.assertEqual(self.client.get('/api/report').json, report_before)
+        response = self.post('/api/orders', dict(pending, quote=old_quote))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json['preview']['commission'], 135000)
+        self.assertEqual(len(self.client.get('/api/orders').json), 1)
+        self.assertEqual(self.post('/api/orders', dict(pending, quote=response.json['quote'])).status_code, 201)
+
+    def test_deleting_inactive_rule_keeps_other_rules_and_explicit_zero(self):
+        self.rule(name='Shop rate')
+        first = self.client.get('/api/catalog').json['rules'][0]['id']
+        self.post(f'/api/rules/{first}/toggle', {})
+        self.rule(name='Explicit zero', employee_id=1, value=0)
+        self.assertEqual(self.post(f'/api/rules/{first}/delete', {}).status_code, 200)
+        rules = self.client.get('/api/catalog').json['rules']
+        self.assertEqual([row['name'] for row in rules], ['Explicit zero'])
+        preview = self.post('/api/orders/quote', self.payload()).json['preview']
+        self.assertEqual([row['commission'] for row in preview['items']], [0,45000])
+        self.assertEqual(self.post(f'/api/rules/{first}/delete', {}).status_code, 404)
+
+    def test_rule_delete_requires_login_and_csrf(self):
+        self.rule()
+        rule_id = self.client.get('/api/catalog').json['rules'][0]['id']
+        path = f'/api/web/rules/{rule_id}/delete'
+        raw = FlaskClient(self.app)
+        self.assertEqual(raw.post(path, json={}).status_code, 403)
+        anonymous = raw.get('/api/web/session').json
+        self.assertEqual(raw.post(path, json={}, headers={'Authorization':'Bearer ' + anonymous['token'], 'X-CSRF-Token':anonymous['csrf']}).status_code, 401)
+        self.assertEqual(self.client.post(path, json={}).status_code, 403)
+        self.assertEqual(self.client.post(path, json={}, headers={'X-CSRF-Token':'wrong'}).status_code, 403)
+        self.assertEqual(len(self.client.get('/api/catalog').json['rules']), 1)
+
 
     def test_expired_token_is_rejected(self):
         with closing(sqlite3.connect(self.path)) as connection, connection:
